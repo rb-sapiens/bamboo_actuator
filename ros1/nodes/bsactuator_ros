@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+#################################################################################
+# MIT License
+
+# Copyright (c) 2022 Shun Nagao
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#################################################################################
+
+import threading
+import time
+
+import rospy
+from bamboo_actuator import BambooActuator
+from std_msgs.msg import Bool, Int16, String
+from actionlib_msgs.msg import GoalStatus
+
+lock = threading.RLock()
+ba = None
+moving = False
+pending_length = None
+ready = False
+opened_at = 0.0
+next_query = 0.0
+publisher_get_length = None
+publisher_goal_status = None
+
+
+def close_actuator():
+    global ba, moving, pending_length, ready
+    with lock:
+        actuator = ba
+        ba = None
+        moving = False
+        pending_length = None
+        ready = False
+        if actuator is None:
+            return
+        try:
+            if actuator.stop() is None:
+                rospy.logwarn("Stop before close failed: %s", actuator.last_error)
+        except Exception as exc:
+            rospy.logwarn("Stop before close failed: %s", exc)
+        finally:
+            try:
+                if actuator.close() is None:
+                    rospy.logwarn("Close failed: %s", actuator.last_error)
+            except Exception as exc:
+                rospy.logwarn("Close failed: %s", exc)
+
+
+def fail(reason):
+    rospy.logerr("Actuator error: %s", reason)
+    close_actuator()
+
+
+def set_length(msg):
+    global ba, moving, pending_length, ready, opened_at, next_query
+    with lock:
+        length = msg.data
+        if not 0 <= length <= 4000:
+            rospy.logwarn("Invalid target: %s (expected 0..4000 mm)", length)
+            return
+        try:
+            if ba is None:
+                ba = BambooActuator("/dev/bamboo_actuator", 115200)
+                ba.timeout_get = 0.2
+                ready = False
+                opened_at = time.monotonic()
+                next_query = opened_at + 2.0
+            if moving:
+                if ba.stop() is None:
+                    fail(ba.last_error)
+                    return
+                moving = False
+            pending_length = length
+        except Exception as exc:
+            fail(exc)
+
+
+def reset(msg):
+    global moving, pending_length, ready, opened_at, next_query
+    if msg.data != "true":
+        return
+    with lock:
+        if ba is None:
+            return
+        try:
+            if ba.reset() is None:
+                fail(ba.last_error)
+                return
+            moving = False
+            pending_length = None
+            ready = False
+            opened_at = time.monotonic()
+            next_query = opened_at + 2.0
+        except Exception as exc:
+            fail(exc)
+
+
+def stop(msg):
+    if msg.data == "true":
+        stop_actuator()
+
+
+def stop_bool(msg):
+    if msg.data:
+        stop_actuator()
+
+
+def stop_actuator():
+    global moving, pending_length
+    with lock:
+        moving = False
+        pending_length = None
+        if ba is None:
+            return
+        try:
+            if ba.stop() is None:
+                fail(ba.last_error)
+        except Exception as exc:
+            fail(exc)
+
+
+def publish_get_length():
+    global moving, pending_length, ready, next_query
+    with lock:
+        if ba is None:
+            return
+        try:
+            now = time.monotonic()
+            if not ready:
+                if now - opened_at >= 60.0:
+                    fail("timeout: actuator initialization")
+                    return
+                if now < next_query:
+                    return
+                next_query = now + 0.5
+                if ba.initialized() is not True:
+                    return
+                ready = True
+
+            complete = ba.poll_completion()
+            if complete is None:
+                fail(ba.last_error)
+                return
+            if complete is True and moving:
+                moving = False
+                goal = GoalStatus()
+                stamp = rospy.Time.now()
+                goal.goal_id.stamp = stamp
+                goal.goal_id.id = "bsactuator-{}.{}".format(stamp.secs, stamp.nsecs)
+                goal.status = 3
+                goal.text = "Goal reached."
+                publisher_goal_status.publish(goal)
+
+            if pending_length is not None:
+                if ba.set_length(pending_length) is None:
+                    fail(ba.last_error)
+                    return
+                pending_length = None
+                moving = True
+
+            if now >= next_query:
+                next_query = now + 0.5
+                length = ba.get_length()
+                if length is None:
+                    fail(ba.last_error)
+                    return
+                publisher_get_length.publish(length)
+        except Exception as exc:
+            fail(exc)
+
+
+if __name__ == '__main__':
+    rospy.init_node('bsactuator', log_level=rospy.DEBUG)
+    publisher_get_length = rospy.Publisher("bamboo_actuator/length", Int16, queue_size=10)
+    publisher_goal_status = rospy.Publisher("bamboo_actuator/status", GoalStatus, queue_size=10)
+    rospy.on_shutdown(close_actuator)
+    rospy.Subscriber('set_length', Int16, set_length)
+    rospy.Subscriber('reset', String, reset)
+    rospy.Subscriber('stop', String, stop)
+    rospy.Subscriber('/bamboo_actuator/stop', Bool, stop_bool)
+    rospy.loginfo("bambooshoot actuator started (waiting for a movement command).")
+    rate = rospy.Rate(10)
+    while not rospy.is_shutdown():
+        publish_get_length()
+        rate.sleep()

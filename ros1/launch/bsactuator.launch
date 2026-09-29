@@ -1,0 +1,3 @@
+<launch>
+  <node pkg="bsactuator_ros" type="bsactuator_ros" name="bsactuator" output="screen" />
+</launch>

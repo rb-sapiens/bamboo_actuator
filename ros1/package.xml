@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>bsactuator_ros</name>
+  <version>0.2.1</version>
+  <description>The bsactuator package</description>
+  <maintainer email="nagao@rb-sapiens.com">Shun Nagao</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+</package>
