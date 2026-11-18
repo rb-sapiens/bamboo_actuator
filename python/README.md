@@ -16,23 +16,24 @@ ROS2で利用する場合は、ROS2ノードを実行するPython環境へイン
 接続先を `/dev/bamboo_actuator` に固定します。ROS2ノードもこの名前を既定で使用します。
 udevは必須ではなく、実際のポート名を直接指定することもできます。
 
-用意済みの [bamboo_actuator.rules](bamboo_actuator.rules) をコピーして使用します。ファイルの編集は不要です。
+用意済みの [bamboo_actuator.rules](bamboo_actuator.rules) をコピーして使用します。Arduino UNO R4 WiFi（2341:1002）とUNO R4 Minima（2341:0069）に対応しています。ファイルの編集は不要です。
 
 1. この `python/` ディレクトリ内で、ルールをコピーして再読み込みします。
 
    ```sh
    sudo cp bamboo_actuator.rules /etc/udev/rules.d/99-bamboo-actuator.rules
+   sudo usermod -aG dialout "$USER"
    sudo udevadm control --reload-rules
    ```
 
-2. 本体のUSBを抜き差しし、接続先を確認します。
+2. 本体のUSBを抜き差しし、ログインし直してから接続先を確認します。
 
    ```sh
    readlink -f /dev/bamboo_actuator
    ls -lL /dev/bamboo_actuator
    ```
 
-   接続先が表示されれば設定完了です。付属ルールで読み書き権限を設定するため、グループ追加は不要です。
+   接続先が表示され、`dialout`グループで読み書きできれば設定完了です。ルールは所有グループを`dialout`、権限を`0660`に設定します。
 
 macOS・Windowsではudevを使いません。`/dev/bamboo_actuator`の部分を、`/dev/cu.usbmodem...` や `COM3` など、実際のポート名で指定します。
 

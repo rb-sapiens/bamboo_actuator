@@ -1,1 +1,2 @@
-KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE:="0777", SYMLINK+="bamboo_actuator"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="1002", GROUP="dialout", MODE="0660", SYMLINK+="bamboo_actuator"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0069", GROUP="dialout", MODE="0660", SYMLINK+="bamboo_actuator"
